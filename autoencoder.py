@@ -18,18 +18,14 @@ NUM_HIDDEN_2 = 128 # 2nd layer num features (the latent dim)
 NUM_INPUT = 784 # MNIST data input (img shape: 28*28)
 # tf Graph input (only pictures)
 INDEP_VAR = tf.placeholder("float", [None, NUM_INPUT])
-WEIGHTS = {
-    'encoder_h1': tf.Variable(tf.random_normal([NUM_INPUT, NUM_HIDDEN_1])),
-    'encoder_h2': tf.Variable(tf.random_normal([NUM_HIDDEN_1, NUM_HIDDEN_2])),
-    'decoder_h1': tf.Variable(tf.random_normal([NUM_HIDDEN_2, NUM_HIDDEN_1])),
-    'decoder_h2': tf.Variable(tf.random_normal([NUM_HIDDEN_1, NUM_INPUT])),
-}
-BIASES = {
-    'encoder_b1': tf.Variable(tf.random_normal([NUM_HIDDEN_1])),
-    'encoder_b2': tf.Variable(tf.random_normal([NUM_HIDDEN_2])),
-    'decoder_b1': tf.Variable(tf.random_normal([NUM_HIDDEN_1])),
-    'decoder_b2': tf.Variable(tf.random_normal([NUM_INPUT])),
-}
+WEIGHTS = {'encoder_h1': tf.Variable(tf.random_normal([NUM_INPUT, NUM_HIDDEN_1])),
+           'encoder_h2': tf.Variable(tf.random_normal([NUM_HIDDEN_1, NUM_HIDDEN_2])),
+           'decoder_h1': tf.Variable(tf.random_normal([NUM_HIDDEN_2, NUM_HIDDEN_1])),
+           'decoder_h2': tf.Variable(tf.random_normal([NUM_HIDDEN_1, NUM_INPUT]))}
+BIASES = {'encoder_b1': tf.Variable(tf.random_normal([NUM_HIDDEN_1])),
+          'encoder_b2': tf.Variable(tf.random_normal([NUM_HIDDEN_2])),
+          'decoder_b1': tf.Variable(tf.random_normal([NUM_HIDDEN_1])),
+          'decoder_b2': tf.Variable(tf.random_normal([NUM_INPUT]))}
 #
 def encoder(input_signal):
     """ This builds the encoder """
@@ -50,22 +46,18 @@ OPTIMIZER = tf.train.RMSPropOptimizer(LEARNING_RATE).minimize(LOSS)
 # Initialize the variables (i.e. assign their default value)
 INIT = tf.global_variables_initializer()
 # Start Training
-# Start a new TF session
 with tf.Session() as sess:
-    # Run the initializer
     sess.run(INIT)
     # Training
     for i in range(1, NUM_STEPS+1):
-        # Prepare Data
-        # Get the next batch of MNIST data (only images are needed, not labels)
+        # Prepare Data: Get the next batch of MNIST data (only images are needed, not labels)
         batch_x, _ = MNIST.train.next_batch(BATCH_SIZE)
         # Run optimization op (backprop) and cost op (to get loss value)
         _, batch_loss = sess.run([OPTIMIZER, LOSS], feed_dict={INDEP_VAR: batch_x})
         # Display logs per step
         if i % DISPLAY_STEP == 0 or i == 1:
             print('Step %i: Minibatch Loss: %f' % (i, batch_loss))
-    # Testing
-    # Encode and decode images from test set and visualize their reconstruction.
+    # Testing: Encode and decode images from test set and visualize their reconstruction.
     NUM_IMG = 4
     CANVAS_ORIG = np.empty((28 * NUM_IMG, 28 * NUM_IMG))
     CANVAS_RECON = np.empty((28 * NUM_IMG, 28 * NUM_IMG))
@@ -77,13 +69,11 @@ with tf.Session() as sess:
         # Display original images
         for j in range(NUM_IMG):
             # Draw the original digits
-            CANVAS_ORIG[i * 28:(i + 1) * 28, j * 28:(j + 1) * 28] = \
-                batch_x[j].reshape([28, 28])
+            CANVAS_ORIG[i * 28:(i + 1) * 28, j * 28:(j + 1) * 28] = batch_x[j].reshape([28, 28])
         # Display reconstructed images
         for j in range(NUM_IMG):
             # Draw the reconstructed digits
-            CANVAS_RECON[i * 28:(i + 1) * 28, j * 28:(j + 1) * 28] = \
-                g[j].reshape([28, 28])
+            CANVAS_RECON[i * 28:(i + 1) * 28, j * 28:(j + 1) * 28] = g[j].reshape([28, 28])
     print("Original Images")
     plt.figure(figsize=(NUM_IMG, NUM_IMG))
     plt.imshow(CANVAS_ORIG, origin="upper", cmap="gray")
