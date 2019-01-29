@@ -22,6 +22,7 @@ from keras.utils import np_utils
 #
 
 
+
 def read_data():
     """ Imports the data and takes care of its peculiarities."""
     column_names = ["ID", "Activity", "Time", "x", "y", "z"]
@@ -113,13 +114,13 @@ Y_TRAIN = np_utils.to_categorical(Y_TRAIN, NUM_CLASSES)
 # y_train = y_train.astype("float32")
 MODEL = Sequential()
 # MODEL.add(Reshape((TIME_PERIODS, num_sensors), input_shape=(input_shape,)))
-MODEL.add(Conv1D(100, 25, activation='relu', input_shape=(TIME_PERIODS, NUM_FEATURES)))
-MODEL.add(Conv1D(100, 10, activation='relu'))
+MODEL.add(Conv1D(100, 10, activation='tanh', input_shape=(TIME_PERIODS, NUM_FEATURES)))
+MODEL.add(Conv1D(100, 5, activation='tanh'))
 MODEL.add(MaxPooling1D(3))
-MODEL.add(Conv1D(200, 10, activation='relu'))
-MODEL.add(Conv1D(200, 5, activation='relu'))
+MODEL.add(Conv1D(200, 10, activation='tanh'))
+MODEL.add(Conv1D(200, 5, activation='tanh'))
 MODEL.add(GlobalAveragePooling1D())
-MODEL.add(Dropout(0.3))
+MODEL.add(Dropout(0.1))
 MODEL.add(Dense(NUM_CLASSES, activation='softmax'))
 print(MODEL.summary())
 CALLBACKS_LIST = [
@@ -128,7 +129,8 @@ CALLBACKS_LIST = [
     EarlyStopping(monitor='acc', patience=1) # if accuracy doesn't improve in 2 epochs, stop.
 ]
 MODEL.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
-HISTORY = MODEL.fit(X_TRAIN, Y_TRAIN, batch_size=400, epochs=50, callbacks=CALLBACKS_LIST, validation_split=0.2, verbose=1)
+with tf.Session(config=tf.ConfigProto(gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=0.85))):
+    HISTORY = MODEL.fit(X_TRAIN, Y_TRAIN, batch_size=25, epochs=50, callbacks=CALLBACKS_LIST, validation_split=0.2, verbose=1)
 plot_error_history(HISTORY)
 #
 MODEL = load_model("best_model.h5")
