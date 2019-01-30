@@ -23,7 +23,7 @@ def plot_losses(history):
 
 # DATA = pd.DataFrame({"Time": np.linspace(start=0.0, stop=30.0, num=1000, endpoint=False)})
 # DATA["Response(0)"]=np.sin(DATA["Time"])+np.linspace(start=0.0, stop=5.0, num=1000, endpoint=False)+np.random.uniform(low=0.0, high=0.2, size=1000)
-DATA = pd.read_csv("data/zuerich-monthly-sunspot-numbers.csv")
+DATA = pd.read_csv("data/zuerich-monthly-sunspot-numbers.data")  # Comma separated values
 DATA["Response(-1)"] = DATA["Response(0)"].shift(-1)
 DATA["Response(-2)"] = DATA["Response(0)"].shift(-2)
 DATA["Response(-3)"] = DATA["Response(0)"].shift(-3)
