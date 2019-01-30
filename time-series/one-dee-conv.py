@@ -2,6 +2,7 @@
 Lots of inspiration was taken from here:
 https://blog.goodaudience.com/introduction-to-1d-convolutional-neural-networks-in-keras-for-time-sequences-3a7ff801a2cf
 """
+import os
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -107,8 +108,11 @@ def create_model(input_shape, num_classes):
 
 def fit_model(model, x, y):
     """ Fits the model """
+    os.chdir(os.path.dirname(os.path.realpath(__file__)))
+    if not os.path.exists("models"):
+        os.makedirs("models")
     callbacks = [
-        ModelCheckpoint(filepath='best_model.h5', monitor='val_loss', save_best_only=True),
+        ModelCheckpoint(filepath='models/best_model.h5', monitor='val_loss', save_best_only=True),
         EarlyStopping(monitor='acc', patience=1) # if accuracy doesn't improve in 2 epochs, stop.
     ]
     return model.fit(x, y, batch_size=100, epochs=10, verbose=1, validation_split=0.2, callbacks=callbacks)
