@@ -13,28 +13,62 @@ from sklearn import preprocessing
 from matplotlib import pyplot as plt
 import matplotlib.patches as mpatches
 from keras.models import Sequential, load_model
-from keras.layers import LSTM, Dense, TimeDistributed, Conv1D, Dropout, GlobalAveragePooling1D, MaxPooling1D
+from keras.layers import Dense, Conv1D, Dropout, GlobalAveragePooling1D, MaxPooling1D
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras.utils import np_utils
 #
-#from keras.layers import Dense, Dropout, Flatten, Reshape, 
-#from keras.layers import Conv2D, MaxPooling2D, Conv1D, 
+
+
+def feature_normalize(dataset):
+    mu = np.mean(dataset, axis=0)
+    sigma = np.std(dataset, axis=0)
+    return (dataset - mu)/sigma
 #
 
 
-
-def read_data():
+def prep_data():
     """ Imports the data and takes care of its peculiarities."""
-    column_names = ["ID", "Activity", "Time", "x", "y", "z"]
+    column_names = ["Signal ID", "Activity", "Time", "x", "y", "z"]
     df = pd.read_csv("data/WISDM_ar_v1.1_raw.data", header=None, names=column_names)
     df["z"].replace(regex=True, inplace=True, to_replace=";", value="")
     df["z"] = pd.to_numeric(df["z"], errors="coerce")
     df.dropna(axis=0, how="any", inplace=True)
-    return df
+    #
+    df["x norm"] = feature_normalize(df["x"])
+    df["y norm"] = feature_normalize(df["y"])
+    df["z norm"] = feature_normalize(df["z"])
+    #
+    signal_ids = df["Signal ID"].unique()
+    np.random.shuffle(signal_ids)
+    training_cutoff = np.rint(signal_ids.size * 0.75).astype(int)
+    training_signal_ids = signal_ids[:training_cutoff]
+    df["Train/Test"] = "Test"
+    df.loc[df["Signal ID"].isin(training_signal_ids), "Train/Test"] = "Train"
+    #
+    labels = df["Activity"].unique().tolist()
+    encoder = preprocessing.LabelEncoder()
+    df["Encoded Activity"] = encoder.fit_transform(df["Activity"].values.ravel())
+    return df, labels, encoder
 #
 
 
-def create_segments_and_labels(df, time_steps, step, label_name):
+def create_model(input_shape):
+    """ Creates the TF model """
+    model = Sequential()
+    model.add(Conv1D(100, 10, activation='tanh', input_shape=input_shape))
+    model.add(Conv1D(100, 5, activation='tanh'))
+    model.add(MaxPooling1D(3))
+    model.add(Conv1D(200, 10, activation='tanh'))
+    model.add(Conv1D(200, 5, activation='tanh'))
+    model.add(GlobalAveragePooling1D())
+    model.add(Dropout(0.1))
+    model.add(Dense(NUM_CLASSES, activation='softmax'))
+    print(model.summary())
+    model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+    return model
+
+
+def create_segments_and_labels(data_df, time_steps, step, train_test):
     """
     This function receives a dataframe and returns the reshaped segments
     of x, y, z acceleration as well as the corresponding labels
@@ -45,18 +79,20 @@ def create_segments_and_labels(df, time_steps, step, label_name):
         reshaped_segmentS
         labels:
     """
+    df = data_df.loc[DATA["Train/Test"]==train_test, ["x norm", "y norm", "z norm", "Encoded Activity"]]
     segments = []
     labels = []
     for i in range(0, len(df) - time_steps, step):
-        xs = df['x'].values[i: i + time_steps]
-        ys = df['y'].values[i: i + time_steps]
-        zs = df['z'].values[i: i + time_steps]
-        # Retrieve the most often used label in this segment
-        label = stats.mode(df[label_name][i: i + time_steps])[0][0]
+        xs = df['x norm'].values[i: i + time_steps]
+        ys = df['y norm'].values[i: i + time_steps]
+        zs = df['z norm'].values[i: i + time_steps]
+        # Retrieve the most often used label in this segment.
+        # This is questionable
+        label = stats.mode(df["Encoded Activity"][i: i + time_steps])[0][0]
         segments.append([xs, ys, zs])
         labels.append(label)
     # Bring the segments into a better shape
-    reshaped_segments = np.asarray(segments, dtype= np.float32).reshape(-1, time_steps, 3)
+    reshaped_segments = np.asarray(segments, dtype=np.float16).reshape(-1, time_steps, 3)
     labels = np.asarray(labels)
     return reshaped_segments, labels
 #
@@ -89,55 +125,31 @@ def show_confusion_matrix(validations, predictions):
     plt.show()
 #
 
-DATA = read_data()
-LABELS = ["Downstairs", "Jogging", "Sitting", "Standing", "Upstairs", "Walking"]
+DATA, LABELS, ENCODER = prep_data()
+# LABELS = ["Downstairs", "Jogging", "Sitting", "Standing", "Upstairs", "Walking"]
 TIME_PERIODS = 100
 STEP_DISTANCE = 50
-LABEL = "EncodedActivity"
-LABEL_ENCODER = preprocessing.LabelEncoder()
-DATA[LABEL] = LABEL_ENCODER.fit_transform(DATA["Activity"].values.ravel())
-TRAIN_DATA = DATA[DATA['ID'] <= 28]
-TEST_DATA = DATA[DATA['ID'] > 28]
-# Normalize features for training data set
-# df_train['x-axis'] = feature_normalize(df['x-axis'])
-# df_train['y-axis'] = feature_normalize(df['y-axis'])
-# df_train['z-axis'] = feature_normalize(df['z-axis'])
-
-# Reshape the training data into segments
-# so that they can be processed by the network
-X_TRAIN, Y_TRAIN = create_segments_and_labels(TRAIN_DATA, TIME_PERIODS, STEP_DISTANCE, LABEL)
+#
+X_TRAIN, Y_TRAIN = create_segments_and_labels(DATA, TIME_PERIODS, STEP_DISTANCE, "Train")
 NUM_TIME_PERIODS, NUM_FEATURES = X_TRAIN.shape[1], X_TRAIN.shape[2]
-NUM_CLASSES = LABEL_ENCODER.classes_.size
+NUM_CLASSES = ENCODER.classes_.size
 Y_TRAIN = np_utils.to_categorical(Y_TRAIN, NUM_CLASSES)
-# Convert type for Keras otherwise Keras cannot process the data
-# x_train = x_train.astype("float32")
-# y_train = y_train.astype("float32")
-MODEL = Sequential()
-# MODEL.add(Reshape((TIME_PERIODS, num_sensors), input_shape=(input_shape,)))
-MODEL.add(Conv1D(100, 10, activation='tanh', input_shape=(TIME_PERIODS, NUM_FEATURES)))
-MODEL.add(Conv1D(100, 5, activation='tanh'))
-MODEL.add(MaxPooling1D(3))
-MODEL.add(Conv1D(200, 10, activation='tanh'))
-MODEL.add(Conv1D(200, 5, activation='tanh'))
-MODEL.add(GlobalAveragePooling1D())
-MODEL.add(Dropout(0.1))
-MODEL.add(Dense(NUM_CLASSES, activation='softmax'))
-print(MODEL.summary())
-CALLBACKS_LIST = [
-    ModelCheckpoint(filepath='best_model.h5', monitor='val_loss', save_best_only=True),
-    # ModelCheckpoint(filepath='best_model.{epoch:02d}-{val_loss:.2f}.h5', monitor='val_loss', save_best_only=True),
-    EarlyStopping(monitor='acc', patience=1) # if accuracy doesn't improve in 2 epochs, stop.
-]
-MODEL.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+#
+MODEL = create_model(input_shape=(TIME_PERIODS, NUM_FEATURES))
 with tf.Session(config=tf.ConfigProto(gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=0.85))):
-    HISTORY = MODEL.fit(X_TRAIN, Y_TRAIN, batch_size=25, epochs=50, callbacks=CALLBACKS_LIST, validation_split=0.2, verbose=1)
+    CALLBACKS = [
+        ModelCheckpoint(filepath='best_model.h5', monitor='val_loss', save_best_only=True),
+        EarlyStopping(monitor='acc', patience=1) # if accuracy doesn't improve in 2 epochs, stop.
+    ]
+    HISTORY = MODEL.fit(X_TRAIN, Y_TRAIN, batch_size=100, epochs=50, verbose=1, validation_split=0.2,
+                        callbacks=CALLBACKS)
 plot_error_history(HISTORY)
 #
 MODEL = load_model("best_model.h5")
-X_TEST, Y_TEST = create_segments_and_labels(TEST_DATA, TIME_PERIODS, STEP_DISTANCE, LABEL)
-
+#
+X_TEST, Y_TEST = create_segments_and_labels(DATA, TIME_PERIODS, STEP_DISTANCE, "Test")
 Y_TEST = np_utils.to_categorical(Y_TEST, NUM_CLASSES)
-SCORE = MODEL.evaluate(X_TEST, Y_TEST, verbose=1)
+SCORE = MODEL.evaluate(X_TEST, Y_TEST, verbose=0)
 print("\nAccuracy on test data: %0.2f" % SCORE[1])
 print("\nLoss on test data: %0.2f" % SCORE[0])
 Y_PRED_TEST = MODEL.predict(X_TEST)
