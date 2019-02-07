@@ -92,13 +92,15 @@ def prep_data(time_periods, step_distance):
 def create_model(input_shape, num_classes):
     """ Creates the TF model """
     model = Sequential()
-    model.add(Conv1D(10, 10, activation='tanh', input_shape=input_shape))
-    model.add(Conv1D(10, 5, activation='tanh'))
-    model.add(MaxPooling1D(3))
-    model.add(Conv1D(20, 10, activation='tanh'))
-    model.add(Conv1D(20, 5, activation='tanh'))
+    model.add(Conv1D(50, 16, activation='tanh', input_shape=input_shape))  # 100 in 85 out
+    model.add(Conv1D(50, 8, activation='tanh'))  # 85 in 78 out
+    model.add(MaxPooling1D(3))  # 78 in 26 out
+    model.add(Conv1D(25, 8, activation='tanh'))  # 26 in 19 out
+    model.add(Conv1D(25, 4, activation='tanh'))  # 19 in 16 out
     model.add(GlobalAveragePooling1D())
-    model.add(Dropout(0.1))
+    model.add(Dropout(0.2))
+    model.add(Dense(25))
+    model.add(Dropout(0.2))
     model.add(Dense(num_classes, activation='softmax'))
     print(model.summary())
     model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
@@ -113,9 +115,9 @@ def fit_model(model, x, y):
         os.makedirs("models")
     callbacks = [
         ModelCheckpoint(filepath='models/best_model.h5', monitor='val_loss', save_best_only=True),
-        EarlyStopping(monitor='acc', patience=1) # if accuracy doesn't improve in 2 epochs, stop.
+        EarlyStopping(monitor='val_acc', patience=1) # if accuracy doesn't improve in 2 epochs, stop.
     ]
-    return model.fit(x, y, batch_size=100, epochs=10, verbose=1, validation_split=0.2, callbacks=callbacks)
+    return model.fit(x, y, batch_size=50, epochs=50, verbose=1, validation_split=0.2, callbacks=callbacks)
 #
 
 
