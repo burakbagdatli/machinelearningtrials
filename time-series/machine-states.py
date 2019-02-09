@@ -39,8 +39,8 @@ def start_tf_session():
 
 def load_data():
     """ Loads the initial data in a Pandas DataFrame. """
-    df = pd.read_csv("data/ExperimentData.data", header=0)
-    # df = pd.read_csv("data/ExperimentData_abr.data", header=0) # Smaller dataset for debugging
+    # df = pd.read_csv("data/ExperimentData.data", header=0)
+    df = pd.read_csv("data/ExperimentData_abr.data", header=0) # Smaller dataset for debugging
     # Remove rows with missing data
     # df.dropna(axis=0, how="any", inplace=True)
     # Turn date times to values that can be used for calculations and calculate durations
@@ -73,10 +73,10 @@ def create_segments(data_df, seq_length):
         I modified this only very slightly from the source.
         Source: https://github.com/ni79ls/har-keras-cnn
     """
-    # df = data_df.loc[data_df["Train/Test"]==train_test, ["x scaled", "y scaled", "z scaled", "Encoded Activity"]]
     part_numbers = data_df["Part Number"].unique().tolist()
     segments = pd.DataFrame(columns=data_df.columns.values.tolist())
     segments["Segment"] = None
+    segments["Label"] = None
     segment_column_location_in_tuple = segments.columns.get_loc("Segment") + 1
     segment_base = 0
     print(segment_base)
@@ -104,6 +104,14 @@ def create_segments(data_df, seq_length):
         segments = pd.concat([segments, part_segments], axis=0, ignore_index=True)
         segment_base = part_segments["Segment"].max() + 1 # calculate the new base
     segments.reset_index(drop=True, inplace=True)
+    for segment in np.nditer(segments["Segment"].unique()):
+        this_segment = segments.loc[segments["Segment"]==segment]
+        if this_segment.loc["Process_encoded"].sum() % seq_length == 0:
+            this_segment.loc["Label"] = this_segment.loc["Process_encoded"]
+        elif this_segment.iloc[1, this_segment.columns.get_loc("Process_encoded")] == 0:
+            this_segment.loc["Label"] = np.repeat(1, seq_length)
+        else:
+            this_segment.loc["Label"] = np.repeat(0, seq_length)
     segments.to_csv("data/ExperimentData_segments_"+str(int(seq_length))+".data", index=False)
     return segments
 #
@@ -140,10 +148,10 @@ def prep_data(sequence_length):
 #
 
 prep_data(3)
-prep_data(4)
-prep_data(5)
-prep_data(6)
-prep_data(7)
-prep_data(8)
-prep_data(9)
-prep_data(10)
+#prep_data(4)
+#prep_data(5)
+#prep_data(6)
+#prep_data(7)
+#prep_data(8)
+#prep_data(9)
+#prep_data(10)
