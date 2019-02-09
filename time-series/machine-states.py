@@ -79,7 +79,6 @@ def create_segments(data_df, seq_length):
     segments["Label"] = None
     segment_column_location_in_tuple = segments.columns.get_loc("Segment") + 1
     segment_base = 0
-    print(segment_base)
     # labels = []
     for part in part_numbers:
         part_df = data_df.loc[data_df["Part Number"]==part]
@@ -104,7 +103,7 @@ def create_segments(data_df, seq_length):
         segments = pd.concat([segments, part_segments], axis=0, ignore_index=True)
         segment_base = part_segments["Segment"].max() + 1 # calculate the new base
     segments.reset_index(drop=True, inplace=True)
-    for segment in np.nditer(segments["Segment"].unique()):
+    for segment in list(segments["Segment"].unique()):
         this_segment = segments.loc[segments["Segment"]==segment]
         if this_segment.loc["Process_encoded"].sum() % seq_length == 0:
             this_segment.loc["Label"] = this_segment.loc["Process_encoded"]
