@@ -13,8 +13,8 @@ import tensorflow as tf
 from sklearn.preprocessing import LabelEncoder
 #from matplotlib import pyplot as plt
 #import matplotlib.patches as mpatches
-#from keras.models import Sequential, load_model
-#from keras.layers import Dense, Conv1D, Dropout, GlobalAveragePooling1D, MaxPooling1D
+from keras.models import Sequential, load_model
+from keras.layers import Dense, LSTM
 #from keras.callbacks import ModelCheckpoint, EarlyStopping
 #from keras.utils import np_utils
 
@@ -70,8 +70,7 @@ def load_data():
 
 def create_segments(data_df, seq_length):
     """
-        I modified this only very slightly from the source.
-        Source: https://github.com/ni79ls/har-keras-cnn
+        Creates overlapping segments for learning
     """
     part_numbers = data_df["Part Number"].unique().tolist()
     segments = pd.DataFrame(columns=data_df.columns.values.tolist())
@@ -86,8 +85,7 @@ def create_segments(data_df, seq_length):
         part_segments = pd.DataFrame(index=pd.RangeIndex(length), columns=segments.columns.values.tolist())
         part_segments["Part Number"] = part
         part_segments["Segment"] = part_segments.index // seq_length
-        for row in part_segments.itertuples():
-            part_segments_index = row[0]
+        for part_segments_index in range(part_segments.shape[0])
             part_df_index = part_df.index[row[segment_column_location_in_tuple] + ( part_segments_index % seq_length )]
             part_segments.loc[part_segments_index, "dateTime"] = part_df.loc[part_df_index, "dateTime"]
             part_segments.loc[part_segments_index, "dataItemId"] = part_df.loc[part_df_index, "dataItemId"]
@@ -119,6 +117,62 @@ def create_segments(data_df, seq_length):
 #
 
 
+def create_segments_without_parts(data_df, seq_length):
+    """
+        Creates overlapping segments for learning
+    """
+    length = len(data_df) * seq_length - 2 * np.sum(np.arange(seq_length))
+    segments = pd.DataFrame(index=pd.RangeIndex(length), columns=data_df.columns.values.tolist())
+    segments["Segment"] = segments.index // seq_length
+    segments["Label"] = None
+    segment_column_location_in_tuple = segments.columns.get_loc("Segment") + 1
+    for segments_index in range(segments.shape[0]):
+        data_df_index = data_df.index[row[segment_column_location_in_tuple] + ( segments_index % seq_length )]
+        segments.loc[segments_index, "dateTime"] = data_df.loc[data_df_index, "dateTime"]
+        segments.loc[segments_index, "dataItemId"] = data_df.loc[data_df_index, "dataItemId"]
+        segments.loc[segments_index, "value"] = data_df.loc[data_df_index, "value"]
+        segments.loc[segments_index, "Part Number"] = data_df.loc[data_df_index, "Part Number"]
+        segments.loc[segments_index, "Process"] = data_df.loc[data_df_index, "Process"]
+        segments.loc[segments_index, "dateTime_value"] = data_df.loc[data_df_index, "dateTime_value"]
+        segments.loc[segments_index, "Duration"] = data_df.loc[data_df_index, "Duration"]
+        segments.loc[segments_index, "dataItemId_encoded"] = data_df.loc[data_df_index, "dataItemId_encoded"]
+        segments.loc[segments_index, "Process_encoded"] = data_df.loc[data_df_index, "Process_encoded"]
+        segments.loc[segments_index, "Train/Test"] = data_df.loc[data_df_index, "Train/Test"]
+    segments.reset_index(drop=True, inplace=True)
+    for segment in list(segments["Segment"].unique()):
+        this_segment = segments.loc[segments["Segment"]==segment]
+        indices = this_segment.index
+        if this_segment["Process_encoded"].sum() == 0:
+            segments.loc[indices, "Label"] = np.repeat(0, seq_length)
+        elif this_segment["Process_encoded"].sum() == seq_length:
+            segments.loc[indices, "Label"] = np.repeat(1, seq_length)
+        elif this_segment.iloc[1, this_segment.columns.get_loc("Process_encoded")] == 0:
+            segments.loc[indices, "Label"] = np.repeat(1, seq_length)
+        else:
+            segments.loc[indices, "Label"] = np.repeat(0, seq_length)
+    segments.to_csv("data/ExperimentData_segments_withoutparts_"+str(int(seq_length))+".data", index=False)
+    return segments
+#
+
+
+def create_arrayed_segments(seg_df, seq_length):
+    """ Slices the dataframes and returns an array of sequences for learning. """
+    trn_seg_df = seg_df.loc[seg_df["Train/Test"]=="Train"]
+    tst_seg_df = seg_df.loc[seg_df["Train/Test"]=="Test"]
+    #
+    trn_segments = list(trn_seg_df["Segment"].unique())
+    tst_segments = list(tst_seg_df["Segment"].unique())
+    #
+    x_trn = trn_seg_df["dataItemId_encoded"].to_numpy().reshape(len(trn_segments), 1, seq_length)
+    x_tst = tst_seg_df["dataItemId_encoded"].to_numpy().reshape(len(tst_segments), 1, seq_length)
+    #
+    y_trn = trn_seg_df["Process_encoded"].to_numpy().reshape(len(trn_segments), 1, 1)
+    y_tst = tst_seg_df["Process_encoded"].to_numpy().reshape(len(tst_segments), 1, 1)
+    #
+    return x_trn, y_trn, x_tst, y_tst
+#
+
+
 def prep_data(sequence_length):
     """ Imports the data and takes care of its peculiarities. """
     print("Processing raw data...")
@@ -130,7 +184,7 @@ def prep_data(sequence_length):
         data = load_data()
     print("Segmenting processed data...")
     try:
-        segments = pd.read_csv("data/ExperimentData_segments_"+str(int(sequence_length))+".data", header=0)
+        segments = pd.read_csv("data/ExperimentData_segments_withoutparts_"+str(int(sequence_length))+".data", header=0)
         # Check to make sure segmentation length is valid
         if segments.loc[segments["Segment"]==0].shape[0] != sequence_length:
             raise ValueError
@@ -138,7 +192,8 @@ def prep_data(sequence_length):
         segments["Duration"] = pd.to_timedelta(segments["Duration"]) # Cannot be recovered once saved to csv
         # encoding loses bitdepth. Is this a problem?
     except (FileNotFoundError, ValueError, KeyError):
-        segments = create_segments(data.loc[data["Train/Test"]=="Train"], sequence_length)
+        segments = create_segments_without_parts(data.loc[data["Train/Test"]=="Train"], sequence_length)
+    #
     #num_features = x_train.shape[2]
     #num_classes = encoder.classes_.size
     #y_train = np_utils.to_categorical(y_train, num_classes)
@@ -149,11 +204,17 @@ def prep_data(sequence_length):
     return None
 #
 
-prep_data(3)
-prep_data(4)
+
+def create_model(input_shape, num_classes):
+    """ Creates the TF model """
+    model = Sequential()
+    model.add(LSTM(50, return_sequences=True, input_shape=(None, 6)))  # returns a sequence of vectors of dimension 32
+    model.add(LSTM(25, return_sequences=True))  # returns a sequence of vectors of dimension 32
+    #MODEL.add(LSTM(30, return_sequences=True))  # return a single vector of dimension 32
+    model.add(Dense(activation='tanh', units=100))
+    model.add(Dense(num_classes, activation='softmax'))
+    print(model.summary())
+    return model
+#
+
 prep_data(5)
-prep_data(6)
-prep_data(7)
-prep_data(8)
-prep_data(9)
-prep_data(10)
