@@ -7,16 +7,19 @@ import os
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-#from seaborn import heatmap
+from seaborn import heatmap
 #from scipy.stats import mode
-#from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.metrics import confusion_matrix, classification_report
 from sklearn.preprocessing import LabelEncoder
-#from matplotlib import pyplot as plt
+from matplotlib import pyplot as plt
 #import matplotlib.patches as mpatches
 from keras.models import Sequential, load_model
-from keras.layers import Dense, LSTM
-#from keras.callbacks import ModelCheckpoint, EarlyStopping
-#from keras.utils import np_utils
+from keras.layers import Dense, LSTM, Dropout, TimeDistributed
+from keras.callbacks import ModelCheckpoint, EarlyStopping
+from keras.utils import np_utils
+
+SEQUENCE_LENGTH = 5
+REFIT = True
 
 
 def create_subfolder(folder_name):
@@ -64,7 +67,7 @@ def load_data():
     df["Process_encoded"] = process_encoder.fit_transform(df["Process"].values.ravel())
     # Save and return
     df.to_csv("data/ExperimentData_processed.data", index=False)
-    return df
+    return df, {"dataItemId":data_item_id_encoder, "Process":process_encoder}
 #
 
 
@@ -85,7 +88,7 @@ def create_segments(data_df, seq_length):
         part_segments = pd.DataFrame(index=pd.RangeIndex(length), columns=segments.columns.values.tolist())
         part_segments["Part Number"] = part
         part_segments["Segment"] = part_segments.index // seq_length
-        for part_segments_index in range(part_segments.shape[0])
+        for part_segments_index in range(part_segments.shape[0]):
             part_df_index = part_df.index[row[segment_column_location_in_tuple] + ( part_segments_index % seq_length )]
             part_segments.loc[part_segments_index, "dateTime"] = part_df.loc[part_df_index, "dateTime"]
             part_segments.loc[part_segments_index, "dataItemId"] = part_df.loc[part_df_index, "dataItemId"]
@@ -155,7 +158,7 @@ def create_segments_without_parts(data_df, seq_length):
 #
 
 
-def create_arrayed_segments(seg_df, seq_length):
+def create_arrayed_segments(seg_df, seq_length, num_classes):
     """ Slices the dataframes and returns an array of sequences for learning. """
     trn_seg_df = seg_df.loc[seg_df["Train/Test"]=="Train"]
     tst_seg_df = seg_df.loc[seg_df["Train/Test"]=="Test"]
@@ -166,8 +169,8 @@ def create_arrayed_segments(seg_df, seq_length):
     x_trn = trn_seg_df["dataItemId_encoded"].to_numpy().reshape(len(trn_segments), 1, seq_length)
     x_tst = tst_seg_df["dataItemId_encoded"].to_numpy().reshape(len(tst_segments), 1, seq_length)
     #
-    y_trn = trn_seg_df["Process_encoded"].to_numpy().reshape(len(trn_segments), 1, 1)
-    y_tst = tst_seg_df["Process_encoded"].to_numpy().reshape(len(tst_segments), 1, 1)
+    y_trn = np_utils.to_categorical(trn_seg_df["Process_encoded"].to_numpy()[::seq_length].reshape(len(trn_segments), 1, 1), num_classes)
+    y_tst = np_utils.to_categorical(tst_seg_df["Process_encoded"].to_numpy()[::seq_length].reshape(len(tst_segments), 1, 1), num_classes)
     #
     return x_trn, y_trn, x_tst, y_tst
 #
@@ -176,45 +179,116 @@ def create_arrayed_segments(seg_df, seq_length):
 def prep_data(sequence_length):
     """ Imports the data and takes care of its peculiarities. """
     print("Processing raw data...")
-    try:
-        data = pd.read_csv("data/ExperimentData_processed.data", header=0)
-        data["dateTime_value"] = pd.to_datetime(data["dateTime"]) # Cannot be recovered once saved to csv
-        data["Duration"] = pd.to_timedelta(data["Duration"]) # Cannot be recovered once saved to csv
-    except FileNotFoundError:
-        data = load_data()
+    data, encoders = load_data()
     print("Segmenting processed data...")
     try:
+        #this takes too long so if it's been done before, I'm trying to skip it and just load the file
         segments = pd.read_csv("data/ExperimentData_segments_withoutparts_"+str(int(sequence_length))+".data", header=0)
+        print("Previously segmented sequences found. Loading them instead or resegmenting...")
         # Check to make sure segmentation length is valid
         if segments.loc[segments["Segment"]==0].shape[0] != sequence_length:
+            print("Sequence length is wrong. Re-segmenting...")
             raise ValueError
         segments["dateTime_value"] = pd.to_datetime(segments["dateTime"]) # Cannot be recovered once saved to csv
         segments["Duration"] = pd.to_timedelta(segments["Duration"]) # Cannot be recovered once saved to csv
         # encoding loses bitdepth. Is this a problem?
     except (FileNotFoundError, ValueError, KeyError):
         segments = create_segments_without_parts(data.loc[data["Train/Test"]=="Train"], sequence_length)
+    num_classes = encoders["Process"].classes_.size
+    x_trn, y_trn, x_tst, y_tst = create_arrayed_segments(segments, sequence_length, num_classes)
+    num_features = x_trn.shape[1]
+    labels = data["Process"].unique().tolist()
     #
-    #num_features = x_train.shape[2]
-    #num_classes = encoder.classes_.size
-    #y_train = np_utils.to_categorical(y_train, num_classes)
-    #x_test, y_test = create_segments_and_labels(df, time_periods, step_distance, "Test")
-    #y_test = np_utils.to_categorical(y_test, num_classes)
-    #
-    #return x_train, y_train, x_test, y_test, num_features, num_classes, labels
-    return None
+    return x_trn, y_trn, x_tst, y_tst, num_features, num_classes, labels
 #
 
 
 def create_model(input_shape, num_classes):
     """ Creates the TF model """
     model = Sequential()
-    model.add(LSTM(50, return_sequences=True, input_shape=(None, 6)))  # returns a sequence of vectors of dimension 32
-    model.add(LSTM(25, return_sequences=True))  # returns a sequence of vectors of dimension 32
+    model.add(LSTM(units=50, return_sequences=True, input_shape=input_shape))  # returns a sequence of vectors of dimension 32
+    model.add(LSTM(units=25, return_sequences=True))  # returns a sequence of vectors of dimension 32
     #MODEL.add(LSTM(30, return_sequences=True))  # return a single vector of dimension 32
-    model.add(Dense(activation='tanh', units=100))
-    model.add(Dense(num_classes, activation='softmax'))
+    model.add(TimeDistributed(Dense(activation='tanh', units=100)))
+    # model.add(Dense(units=100, activation="tanh"))
+    model.add(Dropout(0.4))
+    model.add(Dense(units=num_classes, activation='softmax'))
     print(model.summary())
+    model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
     return model
 #
 
-prep_data(5)
+
+def fit_model(model, x, y):
+    """ Fits the model """
+    os.chdir(os.path.dirname(os.path.realpath(__file__)))
+    if not os.path.exists("models"):
+        os.makedirs("models")
+    callbacks = [
+        ModelCheckpoint(filepath='models/machine_states_best_model.h5', monitor='val_loss', save_best_only=True),
+        EarlyStopping(monitor='val_acc', patience=1) # if accuracy doesn't improve in 2 epochs, stop.
+    ]
+    return model.fit(x, y, batch_size=50, epochs=50, verbose=1, validation_split=0.2, callbacks=callbacks)
+#
+
+
+def plot_error_history(history):
+    plt.figure(figsize=(6, 4))
+    plt.plot(history.history['acc'], "g--", label="Accuracy of training data")
+    plt.plot(history.history['val_acc'], "g", label="Accuracy of validation data")
+    plt.plot(history.history['loss'], "r--", label="Loss of training data")
+    plt.plot(history.history['val_loss'], "r", label="Loss of validation data")
+    plt.title('Model Accuracy and Loss')
+    plt.ylabel('Accuracy and Loss')
+    plt.xlabel('Training Epoch')
+    plt.ylim(0)
+    plt.legend()
+    plt.show()
+#
+
+
+def plot_confusion_matrix(matrix, labels):
+    """ Plots a confusion matrix in the form of a heatmap """
+    plt.figure(figsize=(6, 4))
+    heatmap(matrix, cmap="coolwarm", linecolor='white', linewidths=1,
+            xticklabels=labels, yticklabels=labels, annot=True, fmt="d")
+    plt.title("Confusion Matrix")
+    plt.ylabel("True Label")
+    plt.xlabel("Predicted Label")
+    plt.show()
+#
+
+
+def evaluate_model(model, labels, x, y):
+    """ Evaluates model with inputs. Use it with test data. """
+    # Calculate accuracy and loss:
+    score = model.evaluate(x, y, verbose=0)
+    print(f"Accuracy on the test data: {score[1]:0.2}. \nLoss on the test data: {score[0]:0.2}.")
+    # Create confusion matrix:
+    y_pred_max = np.argmax(model.predict(x), axis=1)
+    y_max = np.argmax(y, axis=1)
+    matrix = confusion_matrix(y_max, y_pred_max)
+    plot_confusion_matrix(matrix, labels)
+    # Create classifcation report:
+    print("=====================\nClassification report:")
+    print(classification_report(y_max, y_pred_max))
+#
+
+
+X_TRN, Y_TRN, X_TST, Y_TST, NUM_FEATURES, NUM_CLASSES, LABELS = prep_data(SEQUENCE_LENGTH)
+TF_SESSION = start_tf_session()
+if REFIT:
+    MODEL = create_model(input_shape=(NUM_FEATURES, SEQUENCE_LENGTH), num_classes=NUM_CLASSES)
+    HISTORY = fit_model(MODEL, X_TRN, Y_TRN)
+    print("\nTraining finished.\n")
+    plot_error_history(HISTORY)
+else:
+    try:
+        MODEL = load_model("machine_states_best_model.h5")
+    except FileNotFoundError:
+        MODEL = create_model(input_shape=(NUM_FEATURES, SEQUENCE_LENGTH), num_classes=NUM_CLASSES)
+        HISTORY = fit_model(MODEL, X_TRN, Y_TRN)
+        print("\nTraining finished.\n")
+        plot_error_history(HISTORY)
+    #
+evaluate_model(MODEL, LABELS, X_TST, Y_TST)
