@@ -18,7 +18,7 @@ from keras.layers import Dense, LSTM, Dropout, TimeDistributed
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras.utils import np_utils
 
-SEQUENCE_LENGTH = 5
+SEQUENCE_LENGTH = 13
 REFIT = True
 
 
@@ -56,8 +56,10 @@ def load_data():
     # Create training/validation/test labels
     part_ids = df["Part Number"].unique()
     np.random.shuffle(part_ids)
-    training_cutoff = np.rint(part_ids.size * 0.75).astype(int)
+    training_cutoff = np.rint(part_ids.size * 0.8).astype(int)
     training_part_ids = part_ids[:training_cutoff]
+    print(part_ids)
+    print(training_part_ids)
     df["Train/Test"] = "Test"
     df.loc[df["Part Number"].isin(training_part_ids), "Train/Test"] = "Train"
     # Label encode dataItemIds
@@ -71,7 +73,7 @@ def load_data():
 #
 
 
-def create_segments(data_df, seq_length):
+def create_segments(data_df, seq_length, name_mod):
     """
         Creates overlapping segments for learning
     """
@@ -79,7 +81,7 @@ def create_segments(data_df, seq_length):
     segments = pd.DataFrame(columns=data_df.columns.values.tolist())
     segments["Segment"] = None
     segments["Label"] = None
-    segment_column_location_in_tuple = segments.columns.get_loc("Segment") + 1
+    # segment_column_location_in_tuple = segments.columns.get_loc("Segment") + 1
     segment_base = 0
     # labels = []
     for part in part_numbers:
@@ -89,7 +91,7 @@ def create_segments(data_df, seq_length):
         part_segments["Part Number"] = part
         part_segments["Segment"] = part_segments.index // seq_length
         for part_segments_index in range(part_segments.shape[0]):
-            part_df_index = part_df.index[row[segment_column_location_in_tuple] + ( part_segments_index % seq_length )]
+            part_df_index = part_df.index[part_segments.at[part_segments_index, "Segment"] + ( part_segments_index % seq_length )]
             part_segments.loc[part_segments_index, "dateTime"] = part_df.loc[part_df_index, "dateTime"]
             part_segments.loc[part_segments_index, "dataItemId"] = part_df.loc[part_df_index, "dataItemId"]
             part_segments.loc[part_segments_index, "value"] = part_df.loc[part_df_index, "value"]
@@ -115,7 +117,7 @@ def create_segments(data_df, seq_length):
             segments.loc[indices, "Label"] = np.repeat(1, seq_length)
         else:
             segments.loc[indices, "Label"] = np.repeat(0, seq_length)
-    segments.to_csv("data/ExperimentData_segments_"+str(int(seq_length))+".data", index=False)
+    segments.to_csv("data/ExperimentData_segments_"+str(int(seq_length))+"_"+name_mod+".data", index=False)
     return segments
 #
 
@@ -128,9 +130,9 @@ def create_segments_without_parts(data_df, seq_length):
     segments = pd.DataFrame(index=pd.RangeIndex(length), columns=data_df.columns.values.tolist())
     segments["Segment"] = segments.index // seq_length
     segments["Label"] = None
-    segment_column_location_in_tuple = segments.columns.get_loc("Segment") + 1
+    #segment_column_location_in_tuple = segments.columns.get_loc("Segment") + 1
     for segments_index in range(segments.shape[0]):
-        data_df_index = data_df.index[row[segment_column_location_in_tuple] + ( segments_index % seq_length )]
+        data_df_index = data_df.index[segments.at[segments_index, "Segment"] + ( segments_index % seq_length )]
         segments.loc[segments_index, "dateTime"] = data_df.loc[data_df_index, "dateTime"]
         segments.loc[segments_index, "dataItemId"] = data_df.loc[data_df_index, "dataItemId"]
         segments.loc[segments_index, "value"] = data_df.loc[data_df_index, "value"]
@@ -160,19 +162,11 @@ def create_segments_without_parts(data_df, seq_length):
 
 def create_arrayed_segments(seg_df, seq_length, num_classes):
     """ Slices the dataframes and returns an array of sequences for learning. """
-    trn_seg_df = seg_df.loc[seg_df["Train/Test"]=="Train"]
-    tst_seg_df = seg_df.loc[seg_df["Train/Test"]=="Test"]
+    segments = list(seg_df["Segment"].unique())
+    x = seg_df["dataItemId_encoded"].to_numpy().reshape(len(segments), 1, seq_length)
+    y = np_utils.to_categorical(seg_df["Process_encoded"].to_numpy()[::seq_length].reshape(len(segments), 1, 1), num_classes)
     #
-    trn_segments = list(trn_seg_df["Segment"].unique())
-    tst_segments = list(tst_seg_df["Segment"].unique())
-    #
-    x_trn = trn_seg_df["dataItemId_encoded"].to_numpy().reshape(len(trn_segments), 1, seq_length)
-    x_tst = tst_seg_df["dataItemId_encoded"].to_numpy().reshape(len(tst_segments), 1, seq_length)
-    #
-    y_trn = np_utils.to_categorical(trn_seg_df["Process_encoded"].to_numpy()[::seq_length].reshape(len(trn_segments), 1, 1), num_classes)
-    y_tst = np_utils.to_categorical(tst_seg_df["Process_encoded"].to_numpy()[::seq_length].reshape(len(tst_segments), 1, 1), num_classes)
-    #
-    return x_trn, y_trn, x_tst, y_tst
+    return x, y
 #
 
 
@@ -183,19 +177,20 @@ def prep_data(sequence_length):
     print("Segmenting processed data...")
     try:
         #this takes too long so if it's been done before, I'm trying to skip it and just load the file
-        segments = pd.read_csv("data/ExperimentData_segments_withoutparts_"+str(int(sequence_length))+".data", header=0)
-        print("Previously segmented sequences found. Loading them instead or resegmenting...")
-        # Check to make sure segmentation length is valid
-        if segments.loc[segments["Segment"]==0].shape[0] != sequence_length:
-            print("Sequence length is wrong. Re-segmenting...")
-            raise ValueError
-        segments["dateTime_value"] = pd.to_datetime(segments["dateTime"]) # Cannot be recovered once saved to csv
-        segments["Duration"] = pd.to_timedelta(segments["Duration"]) # Cannot be recovered once saved to csv
+        segments_trn = pd.read_csv("data/ExperimentData_segments_"+str(int(sequence_length))+"_Train.data", header=0)
+        segments_tst = pd.read_csv("data/ExperimentData_segments_"+str(int(sequence_length))+"_Test.data", header=0)
+        print("Previously segmented sequences found. Loading them instead of resegmenting...")
+        segments_trn["dateTime_value"] = pd.to_datetime(segments_trn["dateTime"]) # Cannot be recovered once saved to csv
+        segments_tst["dateTime_value"] = pd.to_datetime(segments_tst["dateTime"]) # Cannot be recovered once saved to csv
+        segments_trn["Duration"] = pd.to_timedelta(segments_trn["Duration"]) # Cannot be recovered once saved to csv
+        segments_tst["Duration"] = pd.to_timedelta(segments_tst["Duration"]) # Cannot be recovered once saved to csv
         # encoding loses bitdepth. Is this a problem?
     except (FileNotFoundError, ValueError, KeyError):
-        segments = create_segments_without_parts(data.loc[data["Train/Test"]=="Train"], sequence_length)
+        segments_trn = create_segments(data.loc[data["Train/Test"]=="Train"], sequence_length, "Train")
+        segments_tst = create_segments(data.loc[data["Train/Test"]=="Test"], sequence_length, "Test")
     num_classes = encoders["Process"].classes_.size
-    x_trn, y_trn, x_tst, y_tst = create_arrayed_segments(segments, sequence_length, num_classes)
+    x_trn, y_trn = create_arrayed_segments(segments_trn, sequence_length, num_classes)
+    x_tst, y_tst = create_arrayed_segments(segments_tst, sequence_length, num_classes)
     num_features = x_trn.shape[1]
     labels = data["Process"].unique().tolist()
     #
@@ -206,12 +201,15 @@ def prep_data(sequence_length):
 def create_model(input_shape, num_classes):
     """ Creates the TF model """
     model = Sequential()
-    model.add(LSTM(units=50, return_sequences=True, input_shape=input_shape))  # returns a sequence of vectors of dimension 32
-    model.add(LSTM(units=25, return_sequences=True))  # returns a sequence of vectors of dimension 32
-    #MODEL.add(LSTM(30, return_sequences=True))  # return a single vector of dimension 32
-    model.add(TimeDistributed(Dense(activation='tanh', units=100)))
-    # model.add(Dense(units=100, activation="tanh"))
-    model.add(Dropout(0.4))
+    model.add(LSTM(units=300, return_sequences=True, input_shape=input_shape))  # returns a sequence of vectors of dimension 100
+    #model.add(LSTM(units=50, return_sequences=True))  # returns a sequence of vectors of dimension 50
+    #model.add(LSTM(units=25, return_sequences=True))  # return a sequence of vectors of dimension 25
+    model.add(TimeDistributed(Dense(activation='tanh', units=100))) # cast down to vectors
+    model.add(Dense(units=100, activation="tanh"))
+    model.add(Dense(units=100, activation="tanh"))
+    model.add(Dense(units=100, activation="tanh"))
+    model.add(Dense(units=100, activation="tanh"))
+    model.add(Dropout(0.25))
     model.add(Dense(units=num_classes, activation='softmax'))
     print(model.summary())
     model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
@@ -226,9 +224,9 @@ def fit_model(model, x, y):
         os.makedirs("models")
     callbacks = [
         ModelCheckpoint(filepath='models/machine_states_best_model.h5', monitor='val_loss', save_best_only=True),
-        EarlyStopping(monitor='val_acc', patience=1) # if accuracy doesn't improve in 2 epochs, stop.
+        EarlyStopping(monitor='val_acc', patience=49) # if accuracy doesn't improve in 50 epochs, stop.
     ]
-    return model.fit(x, y, batch_size=50, epochs=50, verbose=1, validation_split=0.2, callbacks=callbacks)
+    return model.fit(x, y, batch_size=25, epochs=500, verbose=1, validation_split=0.2, callbacks=callbacks)
 #
 
 
@@ -263,10 +261,11 @@ def evaluate_model(model, labels, x, y):
     """ Evaluates model with inputs. Use it with test data. """
     # Calculate accuracy and loss:
     score = model.evaluate(x, y, verbose=0)
+    print(score)
     print(f"Accuracy on the test data: {score[1]:0.2}. \nLoss on the test data: {score[0]:0.2}.")
     # Create confusion matrix:
-    y_pred_max = np.argmax(model.predict(x), axis=1)
-    y_max = np.argmax(y, axis=1)
+    y_pred_max = np.argmax(model.predict(x), axis=2)
+    y_max = np.argmax(y, axis=2)
     matrix = confusion_matrix(y_max, y_pred_max)
     plot_confusion_matrix(matrix, labels)
     # Create classifcation report:
@@ -284,11 +283,12 @@ if REFIT:
     plot_error_history(HISTORY)
 else:
     try:
-        MODEL = load_model("machine_states_best_model.h5")
+        MODEL = load_model("models/machine_states_best_model.h5")
     except FileNotFoundError:
         MODEL = create_model(input_shape=(NUM_FEATURES, SEQUENCE_LENGTH), num_classes=NUM_CLASSES)
         HISTORY = fit_model(MODEL, X_TRN, Y_TRN)
         print("\nTraining finished.\n")
         plot_error_history(HISTORY)
     #
+print(X_TRN.shape, Y_TRN.shape, X_TST.shape, Y_TST.shape)
 evaluate_model(MODEL, LABELS, X_TST, Y_TST)

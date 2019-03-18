@@ -151,7 +151,7 @@ def plot_confusion_matrix(matrix, labels):
 def evaluate_model(model, labels, x, y):
     """ Evaluates model with inputs. Use it with test data. """
     # Calculate accuracy and loss:
-    score = model.evaluate(x, y, verbose=0)
+    score, accuracy = model.evaluate(x, y, verbose=0)
     print(f"Accuracy on the test data: {score[1]:0.2}. \nLoss on the test data: {score[0]:0.2}.")
     # Create confusion matrix:
     y_pred_max = np.argmax(model.predict(x), axis=1)
